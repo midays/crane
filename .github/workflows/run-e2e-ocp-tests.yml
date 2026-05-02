@@ -25,6 +25,17 @@ jobs:
           create_users: "true"
           src_user: "dev"
           tgt_user: "dev"
+      
+      - name: Debug MicroShift startup
+        if: include-CRC-cluster-setup
+        shell: bash
+        run: |
+          echo "=== Running containers ==="
+          docker ps -a
+          echo "=== microshift-src logs ==="
+          docker logs microshift-src --tail 100
+          echo "=== microshift-tgt logs ==="
+          docker logs microshift-tgt --tail 100
 
       - name: Setup Python
         uses: actions/setup-python@v5
