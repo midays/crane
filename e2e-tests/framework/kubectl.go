@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
-	"slices"
 )
 
 type KubectlRunner struct {
@@ -72,6 +72,25 @@ func normalizeKubectlArgs(args ...string) []string {
 	return args
 }
 
+// StripKubectlWarnings removes warning lines from kubectl output.
+// This is useful because some kubectl warnings are written to stderr,
+// and our runner returns combined stdout/stderr output.
+func StripKubectlWarnings(out string) string {
+	lines := strings.Split(out, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "Warning: ") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.Join(filtered, "\n")
+}
+
 // CreateNamespace creates a namespace and treats AlreadyExists as success.
 func (k KubectlRunner) CreateNamespace(ns string) error {
 	args := []string{"create", "namespace", ns}
@@ -114,6 +133,25 @@ func (k KubectlRunner) ApplyYAMLSpec(spec string, namespace string) error {
 		return fmt.Errorf("kubectl apply inline spec failed: %w", err)
 	}
 	return nil
+}
+
+// GetPodNameByLabel returns the first pod name matching a label selector in a namespace.
+// It returns an error when no pod is found or the kubectl query fails.
+func GetPodNameByLabel(k KubectlRunner, namespace, selector string) (string, error) {
+	out, err := k.Run(
+		"get", "pod",
+		"-n", namespace,
+		"-l", selector,
+		"-o", "jsonpath={.items[0].metadata.name}",
+	)
+	if err != nil {
+		return "", err
+	}
+	podName := strings.TrimSpace(out)
+	if podName == "" {
+		return "", fmt.Errorf("no pod found for selector %q in namespace %q", selector, namespace)
+	}
+	return podName, nil
 }
 
 // ValidateApplyDir performs a server-side dry-run apply for a directory.
