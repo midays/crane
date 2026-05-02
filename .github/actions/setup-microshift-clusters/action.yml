@@ -1,0 +1,103 @@
+name: setup-microshift-clusters
+description: Setup src/tgt MicroShift (OCP) clusters on same Docker network
+
+inputs:
+  cpus:
+    description: CPU limit per MicroShift container
+    required: false
+    default: "2"
+  memory:
+    description: Memory limit per MicroShift container
+    required: false
+    default: "4096m"
+  src_ocp_version:
+    description: MicroShift image tag for src cluster (e.g. latest, 4.16, 4.17)
+    required: false
+    default: "latest"
+  tgt_ocp_version:
+    description: MicroShift image tag for tgt cluster
+    required: false
+    default: "latest"
+  route_wait:
+    description: Route/ingress rollout timeout
+    required: false
+    default: "300s"
+  create_users:
+    description: "Optional: create additional HTPasswd users for src/tgt clusters (useful for non-admin/RBAC test scenarios)."
+    required: false
+    default: "false"
+  src_user:
+    description: "Username for the additional src-cluster user created when create_users=true."
+    required: false
+    default: "dev"
+  tgt_user:
+    description: "Username for the additional tgt-cluster user created when create_users=true."
+    required: false
+    default: "dev"
+  src_user_context:
+    description: "Optional kubeconfig context name for src user. If empty, defaults to ocp-dev-src-<src_user>."
+    required: false
+    default: "ocp-dev-src"
+  tgt_user_context:
+    description: "Optional kubeconfig context name for tgt user. If empty, defaults to ocp-dev-tgt-<tgt_user>."
+    required: false
+    default: "ocp-dev-tgt"
+  user_password:
+    description: "Password for HTPasswd users created when create_users=true."
+    required: false
+    default: "developer"
+
+runs:
+  using: composite
+  steps:
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v4
+      with:
+        version: latest
+
+    - name: Install oc CLI
+      shell: bash
+      run: |
+        curl -fsSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz \
+          | sudo tar -xz -C /usr/local/bin oc
+        oc version --client
+
+    - name: Show docker info
+      shell: bash
+      run: docker version
+
+    - name: Setup src/tgt MicroShift same network
+      shell: bash
+      env:
+        MICROSHIFT_CPUS: ${{ inputs.cpus }}
+        MICROSHIFT_MEMORY: ${{ inputs.memory }}
+        SRC_OCP_VERSION: ${{ inputs.src_ocp_version }}
+        TGT_OCP_VERSION: ${{ inputs.tgt_ocp_version }}
+        ROUTE_WAIT: ${{ inputs.route_wait }}
+        CREATE_USERS: ${{ inputs.create_users }}
+        SRC_USER: ${{ inputs.src_user }}
+        TGT_USER: ${{ inputs.tgt_user }}
+        SRC_USER_CONTEXT: ${{ inputs.src_user_context }}
+        TGT_USER_CONTEXT: ${{ inputs.tgt_user_context }}
+        USER_PASSWORD: ${{ inputs.user_password }}
+      run: make setup-microshift-same-network
+
+    - name: Verify clusters
+      shell: bash
+      run: |
+        kubectl config get-contexts
+        kubectl --context=ocp-dev-src get nodes
+        kubectl --context=ocp-dev-tgt get nodes
+        oc --context=ocp-dev-src api-resources | grep -E "route|security" | head -10
+
+    - name: Verify src pod can reach tgt API
+      shell: bash
+      run: |
+        TGT_IP="$(docker inspect microshift-tgt \
+          --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
+        kubectl run test-connectivity \
+          --context=ocp-dev-src \
+          --restart=Never \
+          --image=curlimages/curl:8.8.0 \
+          --rm -i --quiet -- \
+          sh -c "curl -kfsS --connect-timeout 10 --max-time 20 https://${TGT_IP}:6443/version"
