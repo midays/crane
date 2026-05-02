@@ -27,7 +27,7 @@ jobs:
           tgt_user: "dev"
       
       - name: Debug MicroShift startup
-        if: include-CRC-cluster-setup
+        if: failure()
         shell: bash
         run: |
           echo "=== Running containers ==="
